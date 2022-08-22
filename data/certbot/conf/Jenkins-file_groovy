@@ -1,0 +1,155 @@
+#!/usr/bin/env groovy
+import groovy.json.JsonOutput
+import java.text.SimpleDateFormat
+
+def Author=""
+pipeline {
+  agent any
+  parameters {
+    choice(name: 'Service', choices: ['service1', 'service2', 'service3' ], description: 'Pick something')
+    string(name: 'Commit_id', defaultValue: '', description: 'Please Enter CommitID')
+  } 
+  options {
+    ansiColor('xterm')
+  }
+
+  environment {
+        Hash = "${params.Commit_id}"
+        currentDate = sh(returnStdout: true, script: 'date +%Y-%m-%d:%H:%M:%S').trim()
+        Repo_url = "git@example.com:repo/${params.Service}.git"
+        Common_Branch = "${params.Branch}".trim()
+  }
+
+  stages {
+    stage('Getting Dependencies') {
+      steps {
+        echo"${env.Repo_url}"
+        dir("${env.Repo}")
+        {
+          git branch: "prod-branch",
+          credentialsId: 'xxxxxxxx',
+          url: "git@example.com:repo/${env.Repo}.git"
+          sh "ls -lat"
+          sh "git checkout ${env.Hash}"
+          script{
+            Author = sh(returnStdout: true, script: "git show ${env.Hash} -s --format='%ae'")
+            Repobranch = sh(returnStdout: true, script: "git branch -r --contains ${env.Hash}")
+          }
+        }
+      }
+      post {
+        failure{
+          slackSend(color: 'danger', message: "*#${env.BUILD_NUMBER} Failure* Duration - ${currentBuild.durationString.minus(' and counting')} \n*Stage - Cannot Checkout ${env.Repo_url}*\n*Date* : $currentdate\n*Build-User* : ${BUILD_USER_EMAIL}\n*Repository* : ${env.Repo}\n*Branch* : ${Repobranch}\n*CommitID* : ${env.Hash}\n*Commiter Name* : ${Author}\n*For More Detail* : ${env.BUILD_URL}console\n ", channel: "my-channel")
+        }
+        aborted { 
+          slackSend(color: '#808080', message: "*#${env.BUILD_NUMBER} Aborted* Duration - ${currentBuild.durationString.minus(' and counting')} \n*Date* : $currentdate\n*Build-User* : ${BUILD_USER_EMAIL}\n*Repository* : ${env.Repo}\n*Branch* : ${Repobranch}\n*CommitID* : ${env.Hash}\n*Commiter Name* : ${Author}\n*For More Detail* : ${env.BUILD_URL}console\n", channel: "my-channel")
+        } 
+      }
+    }
+    stage('Build and Run Image') {
+      steps {
+          script{   
+           
+        sh "docker build -f ${env.Repo}/Dockerfile -t ${env.Repo}:${env.CONFIG_DOCKER_TAG} ."
+        echo "This is to build from docker file" 
+         
+        } 
+ 
+      }
+      post {
+        failure{
+          slackSend(color: 'danger', message: "*#${env.BUILD_NUMBER} Failure* Duration - ${currentBuild.durationString.minus(' and counting')} \n*Stage - Cannot Build Image*\n*Date* : $currentdate\n*Build-User* : ${BUILD_USER_EMAIL}\n*Repository* : ${env.Repo}\n*Branch* : ${Repobranch}\n*CommitID* : ${env.Hash}\n*Commiter Name* : ${Author}\n*For More Detail* : ${env.BUILD_URL}console\n ", channel: "my-channel")
+        }
+        aborted { 
+          slackSend(color: '#808080', message: "*#${env.BUILD_NUMBER} Aborted* Duration - ${currentBuild.durationString.minus(' and counting')} \n*Date* : $currentdate\n*Build-User* : ${BUILD_USER_EMAIL}\n*Repository* : ${env.Repo}\n*Branch* : ${Repobranch}\n*CommitID* : ${env.Hash}\n*Commiter Name* : ${Author}\n*For More Detail* : ${env.BUILD_URL}console\n", channel: "my-channel")
+        } 
+      }
+    }
+    stage('Executing Health checks') {
+       steps {
+          script{
+            if("${params.Service}" == "service1") {
+              echo"skip"
+              }
+            else if("${params.Service}" == "service2") {
+              echo"skip"
+              }
+            else if("${params.Service}" == "service3") {
+              echo"skip"
+              }  
+            else{
+              sh "docker run --name ${env.Repo}_${env.CONFIG_DOCKER_TAG}  --ulimit nofile=5042:5042 -p 522:522 --sysctl net.core.somaxconn=16000  -d ${env.Repo}:${env.CONFIG_DOCKER_TAG}"
+              sh '''
+              sleep 30s
+              output=`curl -s -o /dev/null   -w "%{http_code}"   http://localhost:5012/healthz/`
+              if [ $output == '200' ]; then
+                  echo 'Ping is success'
+              else
+                  exit -1
+              fi
+            '''
+              }
+            }
+        }
+        post {
+          failure{
+            script{
+            env.errorlog = sh(returnStdout:true, script: "docker logs -n 20 ${env.Repo}_${env.CONFIG_DOCKER_TAG}").trim()
+            }
+            echo "${env.errorlog}"
+            echo "This is for testing"
+            slackSend(color: 'danger', message: "*#${env.BUILD_NUMBER} Failure* Duration - ${currentBuild.durationString.minus(' and counting')} \n*Stage - Health Check Failed*\nError:\n${env.errorlog}*Date* : $currentdate\n*Build-User* : ${BUILD_USER_EMAIL}\n*Repository* : ${env.Repo}\n*Branch* : ${Repobranch}\n*CommitID* : ${env.Hash}\n*Commiter Name* : ${Author}\n*For More Detail* : ${env.BUILD_URL}console\n ", channel: "my-channel")
+        }
+        aborted { 
+          slackSend(color: '#808080', message: "*#${env.BUILD_NUMBER} Aborted* Duration - ${currentBuild.durationString.minus(' and counting')} \n*Date* : $currentdate\n*Build-User* : ${BUILD_USER_EMAIL}\n*Repository* : ${env.Repo}\n*Branch* : ${Repobranch}\n*CommitID* : ${env.Hash}\n*Commiter Name* : ${Author}\n*For More Detail* : ${env.BUILD_URL}console\n", channel: "my-channel")
+        }  
+      }
+    }
+
+    stage('Executing Unit Tests') {
+      steps {
+        echo"skip"
+      }
+      post{
+        failure{
+          slackSend(color: 'danger', message: "*#${env.BUILD_NUMBER} Failure* Duration - ${currentBuild.durationString.minus(' and counting')} \n*Stage - Unit Test Failed*\n*Date* : $currentdate\n*Build-User* : ${BUILD_USER_EMAIL}\n*Repository* : ${env.Repo}\n*Branch* : ${Repobranch}\n*CommitID* : ${env.Hash}\n*Commiter Name* : ${Author}\n*For More Detail* : ${env.BUILD_URL}console\n ", channel: "my-channel")
+        }
+        aborted { 
+          slackSend(color: '#808080', message: "*#${env.BUILD_NUMBER} Aborted* Duration - ${currentBuild.durationString.minus(' and counting')} \n*Date* : $currentdate\n*Build-User* : ${BUILD_USER_EMAIL}\n*Repository* : ${env.Repo}\n*Branch* : ${Repobranch}\n*CommitID* : ${env.Hash}\n*Commiter Name* : ${Author}\n*For More Detail* : ${env.BUILD_URL}console\n", channel: "my-channel")
+        } 
+      }
+    }
+    stage("save image to ecr") {
+      steps {
+        script{   
+          if("${params.Service}" == "service1") {
+             sh "\$(aws ecr get-login --no-include-email --region my-region)"
+             sh "docker tag ${env.Repo}:${env.CONFIG_DOCKER_TAG} ${CONFIG_DOCKER_REGISTRY}snl_${env.Repo}:${env.CONFIG_DOCKER_TAG}"
+             sh "docker push ${CONFIG_DOCKER_REGISTRY}snl_${env.Repo}:${env.CONFIG_DOCKER_TAG}"
+            } 
+         else{        
+           sh "\$(aws ecr get-login --no-include-email --region my-region)"
+           sh "docker tag ${env.Repo}:${env.CONFIG_DOCKER_TAG} ${CONFIG_DOCKER_REGISTRY}${env.Repo}:${env.CONFIG_DOCKER_TAG}"
+           sh "docker push ${CONFIG_DOCKER_REGISTRY}${env.Repo}:${env.CONFIG_DOCKER_TAG}"
+          }
+        } 
+      }
+      post {
+        failure{
+          slackSend(color: 'danger', message: "*#${env.BUILD_NUMBER} Failure* Duration - ${currentBuild.durationString.minus(' and counting')} \n*Stage - Cannot Push To ECR*\n*Date* : $currentdate\n*Build-User* : ${BUILD_USER_EMAIL}\n*Repository* : ${env.Repo}\n*Branch* : ${Repobranch}\n*CommitID* : ${env.Hash}\n*Commiter Name* : ${Author}\n*For More Detail* : ${env.BUILD_URL}console\n ", channel: "my-channel")
+        }
+        aborted { 
+          slackSend(color: '#808080', message: "*#${env.BUILD_NUMBER} Aborted* Duration - ${currentBuild.durationString.minus(' and counting')} \n*Date* : $currentdate\n*Build-User* : ${BUILD_USER_EMAIL}\n*Repository* : ${env.Repo}\n*Branch* : ${Repobranch}\n*CommitID* : ${env.Hash}\n*Commiter Name* : ${Author}\n*For More Detail* : ${env.BUILD_URL}console\n", channel: "my-channel")
+        } 
+      }
+    }
+  }
+  post {
+        success { 
+          slackSend(color: 'good', message: "*#${env.BUILD_NUMBER} Success* Duration - ${currentBuild.durationString.minus(' and counting')} \n*Date* : $currentdate\n*Build-User* : ${BUILD_USER_EMAIL}\n*Repository* : ${env.Repo}\n*Branch* : ${Repobranch}\n*CommitID* : ${env.Hash}\n*Commiter Name* : ${Author}\n*For More Detail* : ${env.BUILD_URL}console\n", channel: "my-channel")
+        }
+        unstable { 
+          slackSend(color: 'warning', message: "*#${env.BUILD_NUMBER} Unstable* Duration - ${currentBuild.durationString.minus(' and counting')} \n*Date* : $currentdate\n*Build-User* : ${BUILD_USER_EMAIL}\n*Repository* : ${env.Repo}\n*Branch* : ${Repobranch}\n*CommitID* : ${env.Hash}\n*Commiter Name* : ${Author}\n*For More Detail* : ${env.BUILD_URL}console\n", channel: "my-channel")
+        }         
+    }
+}
