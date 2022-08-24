@@ -1,5 +1,5 @@
 FROM ubuntu:20.04
-LABEL maintainer="vansh madan"
+LABEL maintainer="rishi gour"
 LABEL version="0.1"
 LABEL description="This is custom Docker Image for Nginx Services."
 RUN apt-get update \
